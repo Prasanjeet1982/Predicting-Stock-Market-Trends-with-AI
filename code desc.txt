@@ -1,0 +1,139 @@
+Let's walk through the code for the entire project, which includes the training script (`train.py`) and the FastAPI application (`app.py`).
+
+**1. Directory Structure**:
+
+Your project directory should look like this:
+
+```
+project_root/
+├── app/
+│   ├── __init__.py
+│   ├── main.py
+│   ├── models/
+│   │   ├── __init__.py
+│   │   ├── prediction.py
+│   ├── utils/
+│   │   ├── __init__.py
+│   │   ├── preprocessing.py
+│   │   ├── model_loading.py
+├── scripts/
+│   ├── train.py
+│   ├── xgb_model.bin
+│   ├── lstm_model.h5
+│   ├── scaler_data.csv
+├── models/
+│   ├── xgb_model.bin
+│   ├── lstm_model.h5
+│   ├── scaler_data.csv
+├── requirements.txt
+```
+
+**2. `scripts/train.py`**:
+
+This script is responsible for training the machine learning models (XGBoost and LSTM) using your data.
+
+**3. `app/main.py`**:
+
+This script contains the FastAPI application that serves as a web interface for making stock price movement predictions.
+
+Now, let's delve into the details of each component:
+
+**1. `scripts/train.py`**:
+
+```python
+import numpy as np
+import pandas as pd
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import MinMaxScaler
+from xgboost import XGBClassifier
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import LSTM, Dense
+import os
+
+# Load and preprocess data (Replace 'path_to_your_data.csv' with actual data path)
+data = pd.read_csv('path_to_your_data.csv')
+
+# Feature matrix X and target vector y
+X = data[['Open', 'High', 'Low', 'Close', 'Volume', 'SMA_50', 'SMA_200', 'RSI', 'Sentiment']]
+y = data['Target']
+
+# Normalize the data
+scaler = MinMaxScaler(feature_range=(0, 1))
+X_scaled = scaler.fit_transform(X)
+
+# Split the data into training and testing sets
+X_train, X_test, y_train, y_test = train_test_split(X_scaled, y, test_size=0.2, random_state=42)
+
+# Train an XGBoost model
+xgb_model = XGBClassifier(n_estimators=200, max_depth=5)
+xgb_model.fit(X_train, y_train)
+
+# Save the XGBoost model
+os.makedirs('models', exist_ok=True)
+xgb_model.save_model('models/xgb_model.bin')
+
+# Train an LSTM model
+sequence_length = 30
+X_lstm = []
+y_lstm = []
+for i in range(sequence_length, len(X_scaled)):
+    X_lstm.append(X_scaled[i - sequence_length:i, :])
+    y_lstm.append(y[i])
+X_lstm, y_lstm = np.array(X_lstm), np.array(y_lstm)
+
+model_lstm = Sequential()
+model_lstm.add(LSTM(units=50, return_sequences=True, input_shape=(X_lstm.shape[1], X_lstm.shape[2])))
+model_lstm.add(LSTM(units=50, return_sequences=False))
+model_lstm.add(Dense(units=25))
+model_lstm.add(Dense(units=1))
+model_lstm.compile(optimizer='adam', loss='mean_squared_error')
+model_lstm.fit(X_lstm, y_lstm, batch_size=64, epochs=50)
+
+# Save the LSTM model
+model_lstm.save('models/lstm_model.h5')
+```
+
+**2. `app/main.py`**:
+
+```python
+from fastapi import FastAPI
+from app.models.prediction import PredictionInput
+from app.utils.preprocessing import get_scaled_features
+from app.utils.model_loading import load_xgb_model, load_lstm_model
+from app.models.ensemble import make_ensemble_prediction
+
+app = FastAPI()
+
+xgb_model = load_xgb_model('models/xgb_model.bin')
+lstm_model = load_lstm_model('models/lstm_model.h5')
+
+@app.post("/predict/")
+def predict_price_movement(input_data: PredictionInput):
+    scaled_features = get_scaled_features(input_data)
+    ensemble_prediction = make_ensemble_prediction(xgb_model, lstm_model, scaled_features)
+    return {"ensemble_prediction": int(ensemble_prediction[0])}
+```
+
+**3. Other Modules and Packages**:
+
+The `app.models` package contains the `PredictionInput` class that defines the expected input format for predictions. The `app.utils` package contains modules for preprocessing and model loading. The `app.models.ensemble` module contains the function for making ensemble predictions.
+
+The `scripts` directory contains the training script and the trained models.
+
+The `models` directory stores the trained models and any data needed for preprocessing.
+
+**4. Running the Project**:
+
+1. Train your models using the training script:
+   ```bash
+   python scripts/train.py
+   ```
+
+2. Run the FastAPI application:
+   ```bash
+   uvicorn app.main:app --reload
+   ```
+
+3. Access the API documentation at `http://127.0.0.1:8000/docs` to test your predictions using the Swagger interface.
+
+This structured approach helps you organize your code, making it more maintainable and modular. You can easily extend and modify different parts of the project without affecting the entire system.
